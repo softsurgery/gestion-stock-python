@@ -1,6 +1,6 @@
 import os
 import shutil
-from PyQt5.QtWidgets import QApplication, QMainWindow, QLabel, QFileDialog, QTableWidgetItem
+from PyQt5.QtWidgets import QApplication, QMainWindow, QFileDialog, QTableWidgetItem
 from PyQt5.QtGui import QPixmap
 from PyQt5.uic import loadUi
 from services import ShelfService
@@ -9,6 +9,8 @@ import uuid
 class MainWindow(QMainWindow):
     shelves_list = []
     shelfService = ShelfService.ShelfService()
+    shelf_mode = "ADD"
+    product_mode  = "ADD"
     
     def __init__(self):
         super().__init__()
@@ -22,14 +24,19 @@ class MainWindow(QMainWindow):
         loadUi("ui/interface.ui", self)
         
         # Connect buttons
-        self.add_product_button.clicked.connect(self.add_product)
-        self.add_shelf_button.clicked.connect(self.add_shelf)
+        self.add_product_button.clicked.connect(self.add_or_update_product)
+        self.add_shelf_button.clicked.connect(self.add_or_update_shelf)
         
         # Add functionality to upload an image
         self.picture.mousePressEvent = self.upload_picture
         
         # Connect the shelf table click event to load products
         self.shelves.itemClicked.connect(self.load_shelf_products)
+        self.delete_shelf_button.clicked.connect(self.delete_shelf)  # Delete shelf button
+        self.empty.clicked.connect(self.empty_shelf_products)  # Empty button
+
+        # Connect the shelf table click event to load products
+        self.shelves.itemClicked.connect(self.load_shelf)
         
         # Placeholder for the picture path
         self.picture_path = None
@@ -53,7 +60,7 @@ class MainWindow(QMainWindow):
             self.picture.setPixmap(pixmap)
             self.picture.setScaledContents(True)
 
-    def add_product(self):
+    def add_or_update_product(self):
         """Add a new product and save its picture."""
         # Gather product information
         name = self.product_name.text()
@@ -86,36 +93,60 @@ class MainWindow(QMainWindow):
         self.picture_path = None
         self.statusBar().showMessage("Product added successfully!", 5000)
 
-    def add_shelf(self):
-        """Add a new shelf."""
+    def add_or_update_shelf(self):
+        """Add or update a shelf."""
         name = self.shelf_name.text()
         location = self.location.text()
         capacity = self.capacity.text()
-        
+
         # Verify all fields are filled
         if not (name and location and capacity):
             self.statusBar().showMessage("Please fill all fields of shelf", 5000)
             return
-        
-        # Add shelf details to the shelf table
-        row_count = self.shelves.rowCount()
-        self.shelves.insertRow(row_count)
-        self.shelves.setItem(row_count, 0, QTableWidgetItem(name))
-        self.shelves.setItem(row_count, 1, QTableWidgetItem(location))
-        self.shelves.setItem(row_count, 2, QTableWidgetItem(capacity))
-        
-        # Save the shelf to the file
-        self.shelves_list.append(Shelf.Shelf(name, location, capacity, []))
-        self.shelfService.save_shelves(self.shelves_list)
-        
-        # Add shelf name to the comboBox for product assignment
-        self.comboBox.addItem(name)
-        
-        # Reset the form
+
+        if self.shelf_mode == "UPDATE":
+            # Identify the selected shelf to update
+            selected_row = self.shelves.currentRow()
+            if selected_row == -1:
+                self.statusBar().showMessage("No shelf selected for update", 5000)
+                return
+
+            # Update the selected shelf in the table
+            self.shelves.setItem(selected_row, 0, QTableWidgetItem(name))
+            self.shelves.setItem(selected_row, 1, QTableWidgetItem(location))
+            self.shelves.setItem(selected_row, 2, QTableWidgetItem(capacity))
+
+            # Update the shelf in the shelf list
+            self.shelves_list[selected_row].name = name
+            self.shelves_list[selected_row].location = location
+            self.shelves_list[selected_row].capacity = capacity
+
+            # Update the comboBox entry
+            self.comboBox.setItemText(selected_row, name)
+
+            self.statusBar().showMessage("Shelf updated successfully!", 5000)
+        else:  # Default to ADD mode
+            # Add shelf details to the shelf table
+            row_count = self.shelves.rowCount()
+            self.shelves.insertRow(row_count)
+            self.shelves.setItem(row_count, 0, QTableWidgetItem(name))
+            self.shelves.setItem(row_count, 1, QTableWidgetItem(location))
+            self.shelves.setItem(row_count, 2, QTableWidgetItem(capacity))
+
+            # Save the shelf to the shelf list
+            self.shelves_list.append(Shelf.Shelf(name, location, capacity, []))
+            self.shelfService.save_shelves(self.shelves_list)
+
+            # Add shelf name to the comboBox for product assignment
+            self.comboBox.addItem(name)
+
+            self.statusBar().showMessage("Shelf added successfully!", 5000)
+
+        # Reset the form after addition or update
         self.shelf_name.clear()
         self.location.clear()
         self.capacity.clear()
-        self.statusBar().showMessage("Shelf added successfully!", 5000)
+        self.shelf_mode = "ADD"  # Reset mode to ADD
 
     def load_shelves_to_table(self):
         """Load shelves from the list to the table widget."""
@@ -148,6 +179,48 @@ class MainWindow(QMainWindow):
             self.products.setItem(row_count, 1, QTableWidgetItem(product.brand))
             self.products.setItem(row_count, 2, QTableWidgetItem(product.price))
             self.products.setItem(row_count, 3, QTableWidgetItem(product.description))
+
+    def load_shelf(self, item):
+        selected_row = item.row()
+        shelf_name = self.shelves.item(selected_row, 0).text()
+        selected_shelf = next((shelf for shelf in self.shelves_list if shelf.name == shelf_name), None)
+        self.shelf_mode = "UPDATE"
+        self.shelf_name.setText(selected_shelf.name)
+        self.location.setText(selected_shelf.location)
+        self.capacity.setText(str(selected_shelf.capacity))
+
+
+    def empty_shelf_products(self):
+        """Clear all products from the selected shelf."""
+        selected_row = self.shelves.currentRow()
+        if selected_row == -1:
+            self.statusBar().showMessage("No shelf selected", 5000)
+            return
+        
+        shelf_name = self.shelves.item(selected_row, 0).text()
+        selected_shelf = next((shelf for shelf in self.shelves_list if shelf.name == shelf_name), None)
+        
+        if selected_shelf:
+            selected_shelf.products.clear()
+            self.shelfService.save_shelves(self.shelves_list)
+            self.load_shelf_products(self.shelves.item(selected_row, 0))  # Refresh the products list
+            self.statusBar().showMessage(f"All products removed from shelf '{shelf_name}'", 5000)
+
+    def delete_shelf(self):
+        """Delete the selected shelf."""
+        selected_row = self.shelves.currentRow()
+        if selected_row == -1:
+            self.statusBar().showMessage("No shelf selected", 5000)
+            return
+        
+        shelf_name = self.shelves.item(selected_row, 0).text()
+        selected_shelf = next((shelf for shelf in self.shelves_list if shelf.name == shelf_name), None)
+        
+        if selected_shelf:
+            self.shelves_list.remove(selected_shelf)
+            self.shelves.removeRow(selected_row)
+            self.shelfService.save_shelves(self.shelves_list)
+            self.statusBar().showMessage(f"Shelf '{shelf_name}' deleted", 5000)
 
 
 if __name__ == "__main__":
